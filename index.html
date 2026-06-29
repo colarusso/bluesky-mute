@@ -28,7 +28,7 @@
   <p>You can also use this bookmarklet. Just drag <a href="javascript:(function()%7B(function%20()%20%7B%0A%20%20const%20selectedText%20%3D%20window.getSelection().toString().trim()%3B%0A%0A%20%20if%20(!selectedText)%20%7B%0A%20%20%20%20alert(%22Select%20a%20word%20or%20phrase%20first%2C%20then%20click%20the%20Bluesky%20mute%20bookmarklet.%22)%3B%0A%20%20%20%20return%3B%0A%20%20%7D%0A%0A%20%20const%20baseUrl%20%3D%20%22https%3A%2F%2Fcolarusso.github.io%2Fbluesky-mute%2F%22%3B%0A%20%20const%20muteUrl%20%3D%20baseUrl%20%2B%20%22%3Fmute%3D%22%20%2B%20encodeURIComponent(selectedText)%3B%0A%0A%20%20window.open(muteUrl%2C%20%22_blank%22%2C%20%22noopener%2Cnoreferrer%22)%3B%0A%7D)()%3B%7D)()%3B" style="background:#ccc;border-radius: 3px;padding: 4px 8px;">Mute</a> to your toolbar. Then from any page, highlight a word or phrase, and click the bookmarklet to mute the selected text.</p>
 
   <div class="note">
-    Use a Bluesky <strong>app password</strong>, not your main password. This page stores the identifier, app password, and service URL in <code>localStorage</code> on this browser because you asked for local storage.
+    Use a Bluesky <strong>app password</strong>, not your main password. This page stores the identifier, app password, and service URL in <code>localStorage</code> on this browser.
   </div>
 
   <label for="mute">Word or phrase to mute</label>
