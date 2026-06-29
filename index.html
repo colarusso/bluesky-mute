@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bluesky Quick Mute</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color-scheme: light dark; }
+    body { max-width: 720px; margin: 40px auto; padding: 0 18px; line-height: 1.45; }
+    label { display: block; margin: 14px 0 6px; font-weight: 650; }
+    input, select, button { font: inherit; width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; border: 1px solid #8887; }
+    button { margin-top: 16px; cursor: pointer; font-weight: 700; }
+    button:disabled { cursor: wait; opacity: 0.7; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .note, #status { border-radius: 12px; padding: 12px 14px; margin-top: 16px; background: color-mix(in srgb, CanvasText 8%, Canvas); }
+    .ok { background: color-mix(in srgb, green 20%, Canvas) !important; }
+    .bad { background: color-mix(in srgb, red 20%, Canvas) !important; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>Bluesky Quick Mute</h1>
+  <p>Add a word or phrase to your Bluesky muted words from the URL, for example:</p>
+  <p><code>https://colarusso.github.io/bluesky-mute/?mute=spoilers</code></p>
+  <p>You can also use this bookmarklet. Just drag <a href="javascript:(function()%7B(function%20()%20%7B%0A%20%20const%20selectedText%20%3D%20window.getSelection().toString().trim()%3B%0A%0A%20%20if%20(!selectedText)%20%7B%0A%20%20%20%20alert(%22Select%20a%20word%20or%20phrase%20first%2C%20then%20click%20the%20Bluesky%20mute%20bookmarklet.%22)%3B%0A%20%20%20%20return%3B%0A%20%20%7D%0A%0A%20%20const%20baseUrl%20%3D%20%22https%3A%2F%2Fcolarusso.github.io%2Fbluesky-mute%2F%22%3B%0A%20%20const%20muteUrl%20%3D%20baseUrl%20%2B%20%22%3Fmute%3D%22%20%2B%20encodeURIComponent(selectedText)%3B%0A%0A%20%20window.open(muteUrl%2C%20%22_blank%22%2C%20%22noopener%2Cnoreferrer%22)%3B%0A%7D)()%3B%7D)()%3B" style="background:#ccc;border-radius: 3px;padding: 4px 8px;">Bluesky Quick Mute</a> to your toolbar. Then you can highlight a word or phrase and click it to mute the selected text.</p>
+
+  <div class="note">
+    Use a Bluesky <strong>app password</strong>, not your main password. This page stores the identifier, app password, and service URL in <code>localStorage</code> on this browser because you asked for local storage. Do not host this on a domain you do not control.
+  </div>
+
+  <label for="mute">Word or phrase to mute</label>
+  <input id="mute" autocomplete="off" placeholder="e.g. movie spoilers" />
+
+  <div class="row">
+    <div>
+      <label for="target">Mute target</label>
+      <select id="target">
+        <option value="content">Post content</option>
+        <option value="tag">Hashtag/tag</option>
+        <option value="both" selected>Content and tag</option>
+      </select>
+    </div>
+    <div>
+      <label for="actorTarget">Apply to</label>
+      <select id="actorTarget">
+        <option value="all" selected>Everyone</option>
+        <option value="exclude-following">Exclude people I follow</option>
+      </select>
+    </div>
+  </div>
+
+  <label for="duration">Mute duration</label>
+  <select id="duration">
+    <option value="forever">Forever</option>
+    <option value="24h" selected>24 hours</option>
+    <option value="7d">7 days</option>
+    <option value="30d">30 days</option>
+  </select>
+
+  <label for="identifier">Bluesky handle or email</label>
+  <input id="identifier" autocomplete="username" placeholder="you.bsky.social" />
+
+  <label for="password">Bluesky app password</label>
+  <input id="password" type="password" autocomplete="current-password" placeholder="xxxx-xxxx-xxxx-xxxx" />
+
+  <label for="service">PDS service URL</label>
+  <input id="service" autocomplete="url" value="https://bsky.social" />
+
+  <button id="saveOnly" type="button">Save credentials only</button>
+  <button id="muteButton" type="button">Mute this word or phrase</button>
+  <button id="clear" type="button">Clear saved credentials</button>
+
+  <div id="status" role="status">Ready.</div>
+
+  <script>
+    const els = {
+      mute: document.querySelector('#mute'),
+      target: document.querySelector('#target'),
+      actorTarget: document.querySelector('#actorTarget'),
+      duration: document.querySelector('#duration'),
+      identifier: document.querySelector('#identifier'),
+      password: document.querySelector('#password'),
+      service: document.querySelector('#service'),
+      status: document.querySelector('#status'),
+      saveOnly: document.querySelector('#saveOnly'),
+      muteButton: document.querySelector('#muteButton'),
+      clear: document.querySelector('#clear'),
+    };
+
+    const STORAGE_KEY = 'bskyQuickMuteCredentials:v1';
+    const SETTINGS_KEY = 'bskyQuickMuteSettings:v1';
+    const MUTED_WORDS_TYPE = 'app.bsky.actor.defs#mutedWordsPref';
+    const MUTED_WORD_TYPE = 'app.bsky.actor.defs#mutedWord';
+
+    function setStatus(message, kind = '') {
+      els.status.textContent = message;
+      els.status.className = kind;
+    }
+
+    function normalizeService(url) {
+      const u = new URL(url || 'https://bsky.social');
+      return u.origin;
+    }
+
+    function xrpc(service, nsid) {
+      return `${normalizeService(service)}/xrpc/${nsid}`;
+    }
+
+    function safeJson(key) {
+      try { return JSON.parse(localStorage.getItem(key) || '{}'); }
+      catch { return {}; }
+    }
+
+    function loadSaved() {
+      const saved = safeJson(STORAGE_KEY);
+      els.identifier.value = saved.identifier || '';
+      els.password.value = saved.password || '';
+      els.service.value = saved.service || 'https://bsky.social';
+
+      const settings = safeJson(SETTINGS_KEY);
+      els.target.value = settings.target || 'both';
+      els.actorTarget.value = settings.actorTarget || 'all';
+      els.duration.value = settings.duration || '24h';
+    }
+
+    function saveSettings() {
+      const settings = {
+        target: els.target.value,
+        actorTarget: els.actorTarget.value,
+        duration: els.duration.value
+      };
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      return settings;
+    }
+
+
+    function saveCredentials() {
+      const credentials = {
+        identifier: els.identifier.value.trim(),
+        password: els.password.value,
+        service: normalizeService(els.service.value.trim() || 'https://bsky.social')
+      };
+      if (!credentials.identifier || !credentials.password) {
+        throw new Error('Enter your Bluesky identifier and app password.');
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(credentials));
+      els.service.value = credentials.service;
+      return credentials;
+    }
+
+    async function apiFetch(service, nsid, { method = 'GET', token, body } = {}) {
+      const res = await fetch(xrpc(service, nsid), {
+        method,
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(body ? { 'Content-Type': 'application/json' } : {})
+        },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+      if (!res.ok) {
+        const detail = data?.message || data?.error || text || `${res.status} ${res.statusText}`;
+        throw new Error(`${nsid} failed: ${detail}`);
+      }
+      return data;
+    }
+
+    async function createSession({ service, identifier, password }) {
+      return apiFetch(service, 'com.atproto.server.createSession', {
+        method: 'POST',
+        body: { identifier, password }
+      });
+    }
+
+    function durationToExpiresAt(duration) {
+      if (duration === 'forever') return null;
+
+      const durationsMs = {
+        '24h': 24 * 60 * 60 * 1000,
+        '7d': 7 * 24 * 60 * 60 * 1000,
+        '30d': 30 * 24 * 60 * 60 * 1000
+      };
+      const ms = durationsMs[duration] || durationsMs['24h'];
+      return new Date(Date.now() + ms).toISOString();
+    }
+
+    function describeDuration(settings) {
+      const labels = {
+        forever: 'forever',
+        '24h': '24 hours',
+        '7d': '7 days',
+        '30d': '30 days'
+      };
+      return labels[settings.duration] || labels['24h'];
+    }
+
+    function makeMutedWord(value, settings) {
+      const mutedWord = {
+        $type: MUTED_WORD_TYPE,
+        id: (crypto.randomUUID ? crypto.randomUUID() : `mute-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+        value,
+        targets: settings.target === 'both' ? ['content', 'tag'] : [settings.target],
+        actorTarget: settings.actorTarget
+      };
+      const expiresAt = durationToExpiresAt(settings.duration);
+      if (expiresAt) mutedWord.expiresAt = expiresAt;
+      return mutedWord;
+    }
+
+    async function muteWord() {
+      const value = els.mute.value.trim();
+      if (!value) throw new Error('No mute phrase found. Add ?mute=some%20phrase or type one in.');
+      if (value.length > 10000) throw new Error('Muted word/phrase is too long for Bluesky.');
+
+      const credentials = saveCredentials();
+      const settings = saveSettings();
+      setStatus('Signing in…');
+      const session = await createSession(credentials);
+      const token = session.accessJwt;
+
+      setStatus('Reading current preferences…');
+      const prefResponse = await apiFetch(credentials.service, 'app.bsky.actor.getPreferences', { token });
+      const preferences = Array.isArray(prefResponse.preferences) ? prefResponse.preferences : [];
+
+      let mutedPref = preferences.find(p => p && p.$type === MUTED_WORDS_TYPE);
+      if (!mutedPref) {
+        mutedPref = { $type: MUTED_WORDS_TYPE, items: [] };
+        preferences.push(mutedPref);
+      }
+      if (!Array.isArray(mutedPref.items)) mutedPref.items = [];
+
+      const existingIndex = mutedPref.items.findIndex(item =>
+        String(item?.value || '').toLocaleLowerCase() === value.toLocaleLowerCase()
+      );
+      const nextMutedWord = makeMutedWord(value, settings);
+      if (existingIndex >= 0) {
+        mutedPref.items[existingIndex] = {
+          ...mutedPref.items[existingIndex],
+          ...nextMutedWord,
+          id: mutedPref.items[existingIndex].id || nextMutedWord.id
+        };
+      } else {
+        mutedPref.items.push(nextMutedWord);
+      }
+
+      setStatus(existingIndex >= 0 ? 'Updating existing muted word…' : 'Saving muted word…');
+      await apiFetch(credentials.service, 'app.bsky.actor.putPreferences', {
+        method: 'POST',
+        token,
+        body: { preferences }
+      });
+
+      setStatus(`${existingIndex >= 0 ? 'Updated' : 'Muted'} “${value}” on Bluesky for ${describeDuration(settings)}.`, 'ok');
+    }
+
+    document.querySelector('#saveOnly').addEventListener('click', () => {
+      try { saveCredentials(); setStatus('Credentials saved in localStorage.', 'ok'); }
+      catch (err) { setStatus(err.message, 'bad'); }
+    });
+
+    document.querySelector('#muteButton').addEventListener('click', async () => {
+      els.muteButton.disabled = true;
+      try { await muteWord(); }
+      catch (err) { console.error(err); setStatus(err.message, 'bad'); }
+      finally { els.muteButton.disabled = false; }
+    });
+
+    document.querySelector('#clear').addEventListener('click', () => {
+      localStorage.removeItem(STORAGE_KEY);
+      els.identifier.value = '';
+      els.password.value = '';
+      els.service.value = 'https://bsky.social';
+      setStatus('Saved credentials cleared. Duration and mute settings were kept.', 'ok');
+    });
+
+    function persistSettingsFromControls() {
+      const settings = saveSettings();
+      setStatus(`Default mute settings saved: ${describeDuration(settings)}.`, 'ok');
+    }
+
+    for (const el of [els.target, els.actorTarget, els.duration]) {
+      el.addEventListener('change', persistSettingsFromControls);
+    }
+
+    loadSaved();
+    const fromUrl = new URLSearchParams(location.search).get('mute');
+    if (fromUrl) {
+      els.mute.value = fromUrl;
+      queueMicrotask(async () => {
+        els.muteButton.disabled = true;
+        try {
+          await muteWord();
+        } catch (err) {
+          console.error(err);
+          setStatus(`${err.message} Fill in your credentials, then click “Mute this word or phrase”.`, 'bad');
+        } finally {
+          els.muteButton.disabled = false;
+        }
+      });
+    }
+  </script>
+</body>
+</html>
